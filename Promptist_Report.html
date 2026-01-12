@@ -1,0 +1,189 @@
+<html><head>
+<style>
+    @page {
+        size: A4;
+        margin: 2cm;
+    }
+    body {
+        font-family: Helvetica, sans-serif;
+        font-size: 11pt;
+        line-height: 1.5;
+    }
+    h1 {
+        font-size: 24pt;
+        color: #2c3e50;
+        border-bottom: 2px solid #2c3e50;
+        padding-bottom: 10px;
+    }
+    h2 {
+        font-size: 18pt;
+        color: #34495e;
+        margin-top: 20px;
+    }
+    h3 {
+        font-size: 14pt;
+        color: #7f8c8d;
+    }
+    code {
+        background-color: #f4f4f4;
+        padding: 2px 4px;
+        font-family: monospace;
+    }
+    pre {
+        background-color: #f4f4f4;
+        padding: 10px;
+        border: 1px solid #ddd;
+        white-space: pre-wrap;
+    }
+    img {
+        max_width: 100%;
+        height: auto;
+        display: block;
+        margin: 20px auto;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+    }
+    th, td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    th {
+        background-color: #f2f2f2;
+    }
+    .mermaid {
+        display: none; /* Mermaid diagrams often don't render in static PDF converters, hiding to avoid clutter */
+    }
+</style>
+</head><body><h1>Promptist Reproduction Project Report</h1>
+<h2>1. Executive Summary</h2>
+<p>This project successfully reproduced the results of Microsoft's <strong>Promptist</strong> (a reinforcement learning-based prompt optimization model) on a local Windows environment with limited VRAM (NVIDIA RTX 4050, 6GB).</p>
+<p>We established a fully offline, quantization-enabled pipeline that allows for:
+1.  <strong>Text Optimization</strong>: Transforming simple prompts into aesthetic-heavy prompts using <code>microsoft/Promptist</code>.
+2.  <strong>Image Generation</strong>: Generating comparison images using <code>runwayml/stable-diffusion-v1-5</code>.
+3.  <strong>VRAM Management</strong>: Running both models sequentially on a 6GB card without OOM errors.</p>
+<hr />
+<h2>2. Environment Setup</h2>
+<p>The original repository required outdated dependencies incompatible with modern hardware (RTX 40 series) and Windows. We modernized the stack:</p>
+<h3>2.1 Core Dependencies</h3>
+<ul>
+<li><strong>Python</strong>: 3.11.0</li>
+<li><strong>PyTorch</strong>: 2.6.0+cu124 (Upgraded from 1.x for CUDA 12 support)</li>
+<li><strong>BitsAndBytes</strong>: 0.49.1 (Enabled 8-bit quantization on Windows)</li>
+<li><strong>Transformers</strong>: Latest version compatible with PyTorch 2.x</li>
+<li><strong>Diffusers</strong>: Patched local version to remove deprecated <code>huggingface_hub</code> imports ("cached_download" error).</li>
+</ul>
+<h3>2.2 Workarounds</h3>
+<ul>
+<li><strong>TRLX</strong>: The Reinforcement Learning library <code>trlx</code> has a hard dependency on <code>DeepSpeed</code>, which is difficult to build on Windows. We patched <code>setup.cfg</code> to remove this dependency, allowing the inference modules to load successfully.</li>
+</ul>
+<hr />
+<h2>3. Model Management</h2>
+<p>To ensure stability and offline capability, we bypassed runtime downloads and stored weights locally:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Source</th>
+<th style="text-align: left;">Local Path</th>
+<th style="text-align: left;">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Promptist</strong></td>
+<td style="text-align: left;"><code>microsoft/Promptist</code></td>
+<td style="text-align: left;"><code>./checkpoints/promptist_sft</code></td>
+<td style="text-align: left;">Text Optimization</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>CLIP</strong></td>
+<td style="text-align: left;"><code>openai/clip-vit-large-patch14</code></td>
+<td style="text-align: left;"><code>./checkpoints/clip</code></td>
+<td style="text-align: left;">Metric Evaluation (Optional)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Stable Diffusion</strong></td>
+<td style="text-align: left;"><code>runwayml/stable-diffusion-v1-5</code></td>
+<td style="text-align: left;">(Cached in Hub)</td>
+<td style="text-align: left;">Image Generation</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. Implementation &amp; Scripts</h2>
+<p>We developed a suite of scripts to verify, optimize, and generate results.</p>
+<h3>4.1 <code>reproduce_results_v2.py</code> (Inference Verification)</h3>
+<p><strong>Purpose</strong>: Validates that the Promptist model loads and generates text correctly.
+-   <strong>Key Feature</strong>: Uses <code>BitsAndBytesConfig</code> for 8-bit loading.
+-   <strong>Fixes</strong>: Implements explicit <code>attention_mask</code> and <code>pad_token_id</code> handling to prevent GPT-2 generation errors.
+-   <strong>Output</strong>: Prints the optimized version of "A futuristic city with flying cars".</p>
+<h3>4.2 <code>generate_report_images.py</code> (End-to-End Pipeline)</h3>
+<p><strong>Purpose</strong>: Generates a side-by-side verification image while managing memory.
+-   <strong>Phase 1</strong>: Loads Promptist (8-bit), optimizes prompt, saves text.
+-   <strong>Phase 2</strong>: <strong>Crucial VRAM Cleanup</strong>. Explicitly deletes the LLM and runs <code>gc.collect()</code>/<code>cuda.empty_cache()</code> to free 6GB VRAM.
+-   <strong>Phase 3</strong>: Loads Stable Diffusion (float16) to generate <code>baseline.png</code> and <code>optimized.png</code>.</p>
+<h3>4.3 <code>batch_test.py</code> &amp; <code>batch_test_v2.py</code></h3>
+<p><strong>Purpose</strong>: Batch processing for evaluation on 7 diverse prompts.
+-   <code>batch_test.py</code>: The initial script that performed both optimization and generation.
+-   <code>save_batch_prompts.py</code>: Extracted the optimized prompt pairs to <code>batch_results/prompts.json</code> for analysis.
+-   <code>batch_test_v2.py</code>: A specialized generation script that reads from the JSON file to reliably regenerate images without re-loading the LLM.</p>
+<hr />
+<h2>5. Workflow Diagram</h2>
+<pre><code class="language-mermaid">graph TD
+    A[Start] --&gt; B(Setup Env &amp; Patch TRLX);
+    B --&gt; C(Download Models Checkpoints);
+    C --&gt; D{Verification};
+    D --&gt;|Step 1| E[reproduce_results_v2.py];
+    E --&gt;|Success| F{Generation};
+
+    subgraph Single Image Pipeline
+    F --&gt;|Step 2| G[generate_report_images.py];
+    G --&gt; H[Optimize Text];
+    H --&gt; I[Clear VRAM];
+    I --&gt; J[Generate Images];
+    end
+
+    subgraph Batch Pipeline
+    F --&gt;|Step 3| K[batch_test.py / save_batch_prompts.py];
+    K --&gt; L[Extract Prompts to JSON];
+    L --&gt; M[batch_test_v2.py];
+    M --&gt; N[Generate 14 Batch Images];
+    end
+</code></pre>
+<hr />
+<h2>6. Results</h2>
+<h3>6.1 Single Verification</h3>
+<p><strong>Prompt</strong>: <em>"A futuristic city with flying cars"</em></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Baseline</th>
+<th style="text-align: center;">Promptist Optimized</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="Baseline" src="baseline.png" /></td>
+<td style="text-align: center;"><img alt="Optimized" src="optimized.png" /></td>
+</tr>
+<tr>
+<td style="text-align: center;"><em>Generic generation</em></td>
+<td style="text-align: center;"><em>Enhanced detail &amp; style</em></td>
+</tr>
+</tbody>
+</table>
+<h3>6.2 Batch optimization</h3>
+<p>Promptist effectively appends aesthetic modifiers. Example from our batch test:</p>
+<p><strong>Original</strong>: <em>"A cat in the rain"</em>
+<strong>Optimized</strong>: <em>"cat in the rain, heavy rain, tears in rain, cinematic lighting, sharp focus, intricate, 8 k, detailed, art by artgerm and greg rutkowski and alphonse mucha"</em></p>
+<p>All 14 batch images are stored in the <code>batch_results_v2/</code> directory.</p>
+<hr />
+<h2>7. Conclusion</h2>
+<p>The Promptist replication is complete. We have successfully:
+- [x] Overcome Windows/Hardware compatibility issues.
+- [x] Implemented a memory-efficient pipeline for 6GB VRAM.
+- [x] Verified results through both single-instance and batch testing.</p></body></html>

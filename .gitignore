@@ -33,3 +33,10 @@ wheels/
 
 # LMOps specific (if any temp files generated)
 *.log
+
+# Large Files & Model Weights
+checkpoints/
+*.bin
+*.safetensors
+*.ckpt
+
